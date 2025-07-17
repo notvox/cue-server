@@ -482,6 +482,102 @@ def play_uri():
         logger.error(f"Play URI error: {e}")
         return {"error": str(e)}, 500
 
+@app.route('/resume', methods=['POST'])
+def resume_session():
+    """Resume a previous session"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if session_id:
+            # Resume specific session
+            cursor = server.conn.cursor()
+            cursor.execute('''
+                SELECT track_uri, track_name, duration_seconds
+                FROM sessions
+                WHERE id = ?
+            ''', (session_id,))
+            
+            session = cursor.fetchone()
+            if not session:
+                return {"error": "Session not found"}, 404
+            
+            track_uri, track_name, original_duration = session
+        else:
+            # Resume last stopped session
+            cursor = server.conn.cursor()
+            cursor.execute('''
+                SELECT track_uri, track_name, duration_seconds
+                FROM sessions
+                WHERE status = 'stopped'
+                ORDER BY start_time DESC
+                LIMIT 1
+            ''')
+            
+            session = cursor.fetchone()
+            if not session:
+                return {"error": "No stopped sessions to resume"}, 404
+            
+            track_uri, track_name, original_duration = session
+        
+        # Use original duration or provided duration
+        duration_str = data.get('duration')
+        if duration_str:
+            duration_seconds = server.parse_duration(duration_str)
+        else:
+            # Resume with remaining time would be complex, so use original duration
+            duration_seconds = original_duration
+            # Convert back to string for display
+            if duration_seconds < 60:
+                duration_str = f"{duration_seconds}s"
+            elif duration_seconds < 3600:
+                duration_str = f"{duration_seconds // 60}m"
+            else:
+                duration_str = f"{duration_seconds // 3600}h"
+        
+        # Stop any existing session
+        server.stop_current_session()
+        
+        # Start playback
+        server.spotify.start_playback(uris=[track_uri])
+        
+        # Create new session
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=duration_seconds)
+        
+        cursor.execute('''
+            INSERT INTO sessions (track_name, track_uri, start_time, end_time, duration_seconds, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (track_name, track_uri, start_time.isoformat(), end_time.isoformat(), duration_seconds, 'playing'))
+        
+        new_session_id = cursor.lastrowid
+        server.conn.commit()
+        
+        # Set timer
+        server.session_timer = threading.Timer(duration_seconds, server.stop_playback_timer)
+        server.session_timer.start()
+        
+        server.current_session = {
+            'id': new_session_id,
+            'track_name': track_name,
+            'track_uri': track_uri,
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration_seconds': duration_seconds
+        }
+        
+        logger.info(f"Resumed: {track_name} for {duration_str}")
+        
+        return {
+            "message": f"Resumed: {track_name}",
+            "duration": duration_str,
+            "ends_at": end_time.isoformat()
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Resume error: {e}")
+        return {"error": str(e)}, 500
+
 if __name__ == '__main__':
     # Check for required environment variables
     required_vars = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET']
