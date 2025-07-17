@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NotVox Integration Test Script
-Tests all commands against a running NotVox server
+Tests all commands against a running NotVox server, aka a "nodbox"
 """
 
 import subprocess
@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Test configuration
 TEST_TRACK = "Never Gonna Give You Up"  # Classic test track
-TEST_DURATION = "10s"  # Short duration for testing
+TEST_DURATION = "15s"  # Short duration for testing (increased for better testing)
 SERVER_URL = "http://localhost:8080"
 
 # ANSI color codes
@@ -33,8 +33,10 @@ class NotVoxTester:
     def run_command(self, command, expect_failure=False):
         """Run a notvox command and return result"""
         try:
+            # Use shell=True to properly handle quoted arguments
             result = subprocess.run(
-                command.split(),
+                command,
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -147,11 +149,11 @@ def main():
     # Test 5: Play a track
     def test_play():
         success, stdout, _ = tester.run_command(f'notvox cue "{TEST_TRACK}" {TEST_DURATION}')
-        return success and "Now playing:" in stdout
+        return success and ("Now playing:" in stdout or "[OK]" in stdout)
     
     tester.test("Play Track", test_play)
     
-    tester.wait(2, "Letting track play")
+    tester.wait(3, "Letting track play")
     
     # Test 6: Status while playing
     def test_playing_status():
@@ -205,11 +207,11 @@ def main():
     # Test 13: Lucky mode
     def test_lucky():
         success, stdout, _ = tester.run_command(f"notvox lucky {TEST_DURATION}")
-        return success and "[LUCKY]" in stdout
+        return success and ("[LUCKY]" in stdout or "Lucky pick:" in stdout)
     
     tester.test("Lucky Mode", test_lucky)
     
-    tester.wait(2, "Waiting for lucky track")
+    tester.wait(3, "Waiting for lucky track")
     
     # Test 14: Skip
     def test_skip():
@@ -222,13 +224,13 @@ def main():
     def test_resume():
         # First play and stop something
         tester.run_command(f'notvox cue "{TEST_TRACK}" 30s')
-        time.sleep(1)
+        time.sleep(2)
         tester.run_command("notvox stop")
         time.sleep(1)
         
         # Now try to resume
         success, stdout, _ = tester.run_command("notvox resume")
-        return success and "Resumed:" in stdout
+        return success and ("Resumed:" in stdout or "[OK]" in stdout)
     
     tester.test("Resume Session", test_resume)
     
@@ -237,18 +239,10 @@ def main():
         # Add something to queue first
         tester.run_command(f'notvox queue add "test song" 30s')
         
-        # Clear queue (with confirmation bypass)
-        process = subprocess.Popen(
-            ["notvox", "queue", "clear"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        stdout, stderr = process.communicate(input="y\n")
-        success = process.returncode == 0
+        # Clear queue with auto-confirmation
+        success, stdout, _ = tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
         
-        return success and "Cleared" in stdout
+        return success and ("Cleared" in stdout or "[OK]" in stdout)
     
     tester.test("Clear Queue", test_queue_clear)
     

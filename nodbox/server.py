@@ -381,7 +381,7 @@ def lucky():
         # Decide whether to use history or discover new
         use_history = len(history_tracks) > 0 and random.random() < 0.7
         
-        if use_history:
+        if use_history and history_tracks:
             # Pick from weighted combined history
             track = random.choice(history_tracks)
             logger.info(f"Lucky pick from {track['source']} history: {track['name']}")
@@ -409,21 +409,47 @@ def lucky():
                     track_id = track['uri'].split(':')[-1]
                     seed_tracks.append(track_id)
             
-            # Get recommendations
-            recommendations = spotify.get_recommendations(
-                seed_tracks=seed_tracks if seed_tracks else None,
-                seed_genres=['pop'] if not seed_tracks else None
-            )
-            
-            if recommendations and recommendations['tracks']:
-                track = random.choice(recommendations['tracks'])
-                track_uri = track['uri']
-                track_name = f"{track['name']} by {track['artists'][0]['name']}"
-                source = "recommendations"
+            # Get recommendations with error handling
+            try:
+                recommendations = spotify.get_recommendations(
+                    seed_tracks=seed_tracks if seed_tracks else None,
+                    seed_genres=['pop'] if not seed_tracks else None
+                )
                 
-                logger.info(f"Lucky pick from recommendations: {track_name}")
-            else:
-                return jsonify({"error": "Could not find recommendations"}), 404
+                if recommendations and recommendations['tracks']:
+                    track = random.choice(recommendations['tracks'])
+                    track_uri = track['uri']
+                    track_name = f"{track['name']} by {track['artists'][0]['name']}"
+                    source = "recommendations"
+                    
+                    logger.info(f"Lucky pick from recommendations: {track_name}")
+                else:
+                    raise Exception("No recommendations returned")
+                    
+            except Exception as e:
+                logger.warning(f"Recommendation API failed: {e}")
+                # Fallback to history if available
+                if history_tracks:
+                    track = random.choice(history_tracks)
+                    track_name = track['name']
+                    track_uri = track['uri']
+                    source = f"history-{track['source']}-fallback"
+                    logger.info(f"Lucky pick from {track['source']} history (fallback): {track['name']}")
+                else:
+                    # Last resort: just search for a popular song
+                    try:
+                        results = spotify.search_track("today's top hits", limit=50)
+                        if results:
+                            track = random.choice(results)
+                            track_uri = track['uri']
+                            track_name = f"{track['name']} by {track['artists'][0]['name']}"
+                            source = "search-fallback"
+                            logger.info(f"Lucky pick from search fallback: {track_name}")
+                        else:
+                            return jsonify({"error": "Could not find any tracks for lucky pick"}), 404
+                    except Exception as search_error:
+                        logger.error(f"Search fallback also failed: {search_error}")
+                        return jsonify({"error": "Could not find any tracks for lucky pick"}), 404
         
         # Start playback
         duration_seconds = session_mgr.parse_duration(duration)
