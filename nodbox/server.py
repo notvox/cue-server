@@ -268,6 +268,67 @@ def health():
         "timestamp": datetime.now().isoformat()
     }), 200
 
+# Add this to server.py after the existing routes
+
+@app.route('/history', methods=['GET'])
+def history():
+    """Get playback history with optional filters"""
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        since = request.args.get('since', None)  # ISO timestamp
+        
+        query = '''
+            SELECT id, track_name, track_uri, start_time, end_time, 
+                   duration_seconds, status
+            FROM sessions
+        '''
+        params = []
+        
+        if since:
+            query += ' WHERE start_time >= ?'
+            params.append(since)
+        
+        query += ' ORDER BY start_time DESC LIMIT ?'
+        params.append(limit)
+        
+        cursor = server.conn.cursor()
+        cursor.execute(query, params)
+        
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                'id': row[0],
+                'track_name': row[1],
+                'track_uri': row[2],
+                'start_time': row[3],
+                'end_time': row[4],
+                'duration_seconds': row[5],
+                'status': row[6]
+            })
+        
+        # Calculate play counts for each track
+        cursor.execute('''
+            SELECT track_name, COUNT(*) as play_count
+            FROM sessions
+            GROUP BY track_uri
+        ''')
+        
+        play_counts = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        # Add play count to each session
+        for session in sessions:
+            session['play_count'] = play_counts.get(session['track_name'], 1)
+        
+        return jsonify({
+            'sessions': sessions,
+            'total': len(sessions)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching history: {e}")
+        return jsonify({"error": "Failed to fetch history"}), 500
+
+
 if __name__ == '__main__':
     # Check for required environment variables
     required_vars = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET']
