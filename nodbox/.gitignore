@@ -3,3 +3,4 @@ venv/
 notvox.db
 notvox.service
 .spotify_cache
+**/.DS_Store
