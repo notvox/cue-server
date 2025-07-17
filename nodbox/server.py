@@ -268,8 +268,6 @@ def health():
         "timestamp": datetime.now().isoformat()
     }), 200
 
-# Add this to server.py after the existing routes
-
 @app.route('/history', methods=['GET'])
 def history():
     """Get playback history with optional filters"""
@@ -328,6 +326,161 @@ def history():
         logger.error(f"Error fetching history: {e}")
         return jsonify({"error": "Failed to fetch history"}), 500
 
+@app.route('/extend', methods=['POST'])
+def extend_session():
+    """Extend or reduce current session time"""
+    try:
+        if not server.current_session:
+            return {"error": "No active session to extend"}, 404
+        
+        data = request.get_json()
+        duration_str = data.get('duration', '0m')
+        
+        # Parse duration (can be negative like "-10m")
+        is_negative = duration_str.startswith('-')
+        if is_negative:
+            duration_str = duration_str[1:]
+        
+        additional_seconds = server.parse_duration(duration_str)
+        if is_negative:
+            additional_seconds = -additional_seconds
+        
+        # Calculate new end time
+        current_end = server.current_session['end_time']
+        new_end = current_end + timedelta(seconds=additional_seconds)
+        
+        # Don't allow extending into the past
+        if new_end <= datetime.now():
+            return {"error": "Cannot extend session to past time"}, 400
+        
+        # Update session
+        server.current_session['end_time'] = new_end
+        new_duration = int((new_end - server.current_session['start_time']).total_seconds())
+        server.current_session['duration_seconds'] = new_duration
+        
+        # Update database
+        cursor = server.conn.cursor()
+        cursor.execute('''
+            UPDATE sessions 
+            SET end_time = ?, duration_seconds = ?
+            WHERE id = ?
+        ''', (new_end.isoformat(), new_duration, server.current_session['id']))
+        server.conn.commit()
+        
+        # Cancel old timer and set new one
+        if server.session_timer:
+            server.session_timer.cancel()
+        
+        time_remaining = (new_end - datetime.now()).total_seconds()
+        server.session_timer = threading.Timer(time_remaining, server.stop_playback_timer)
+        server.session_timer.start()
+        
+        logger.info(f"Extended session by {additional_seconds}s, new end: {new_end}")
+        
+        return {
+            "message": f"Session {'extended' if additional_seconds > 0 else 'reduced'} by {duration_str}",
+            "new_end_time": new_end.isoformat(),
+            "total_duration": server.current_session['duration_seconds']
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Extend error: {e}")
+        return {"error": str(e)}, 500
+
+@app.route('/search', methods=['GET'])
+def search():
+    """Search for tracks and return multiple results"""
+    try:
+        query = request.args.get('q', '')
+        limit = request.args.get('limit', 5, type=int)
+        
+        if not query:
+            return {"error": "Missing search query"}, 400
+        
+        if not server.spotify:
+            return {"error": "Spotify not authenticated"}, 500
+        
+        # Search Spotify
+        results = server.spotify.search(q=query, type='track', limit=limit)
+        
+        tracks = []
+        for item in results['tracks']['items']:
+            tracks.append({
+                'id': item['id'],
+                'uri': item['uri'],
+                'name': item['name'],
+                'artist': item['artists'][0]['name'] if item['artists'] else 'Unknown',
+                'album': item['album']['name'],
+                'duration_ms': item['duration_ms'],
+                'popularity': item['popularity']
+            })
+        
+        return {
+            'query': query,
+            'tracks': tracks,
+            'total': len(tracks)
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        return {"error": str(e)}, 500
+
+
+@app.route('/play-uri', methods=['POST'])
+def play_uri():
+    """Play a specific track by URI (for select mode)"""
+    try:
+        data = request.get_json()
+        track_uri = data.get('uri')
+        track_name = data.get('name', 'Unknown Track')
+        duration_str = data.get('duration', '30m')
+        
+        if not track_uri:
+            return {"error": "Missing track URI"}, 400
+        
+        # Stop any existing session
+        server.stop_current_session()
+        
+        # Start playback
+        server.spotify.start_playback(uris=[track_uri])
+        
+        # Handle duration and session (same as regular play)
+        duration_seconds = server.parse_duration(duration_str)
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=duration_seconds)
+        
+        # Save session
+        cursor = server.conn.cursor()
+        cursor.execute('''
+            INSERT INTO sessions (track_name, track_uri, start_time, end_time, duration_seconds, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (track_name, track_uri, start_time.isoformat(), end_time.isoformat(), duration_seconds, 'playing'))
+        
+        session_id = cursor.lastrowid
+        server.conn.commit()
+        
+        # Set timer
+        server.session_timer = threading.Timer(duration_seconds, server.stop_playback_timer)
+        server.session_timer.start()
+        
+        server.current_session = {
+            'id': session_id,
+            'track_name': track_name,
+            'track_uri': track_uri,
+            'start_time': start_time,
+            'end_time': end_time,
+            'duration_seconds': duration_seconds
+        }
+        
+        return {
+            "message": f"Now playing: {track_name}",
+            "duration": duration_str,
+            "ends_at": end_time.isoformat()
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Play URI error: {e}")
+        return {"error": str(e)}, 500
 
 if __name__ == '__main__':
     # Check for required environment variables
