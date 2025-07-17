@@ -1,3 +1,12 @@
-flask==2.3.3
-spotipy==2.23.0
-schedule==1.2.0
+# Core dependencies
+flask>=2.3.0
+spotipy>=2.23.0
+requests>=2.31.0
+
+# Background task scheduling
+schedule>=1.2.0
+
+# Database (SQLite is built-in to Python)
+# sqlite3 is built into Python standard library
+
+# Logging and utilities are built-in

@@ -1,6 +1,11 @@
 .env
 venv/
+*.log
+*.pid
+*.pyc
+dev.sh
 notvox.db
+notvox.rb
 notvox.service
 .spotify_cache
 **/.DS_Store
