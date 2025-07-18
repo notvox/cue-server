@@ -1,9 +1,12 @@
 # cue-server
 (noun) : something clever someday
+::: **meant for no one but myself. if you find it interesting see below.**
 
 ### what is this?
-this is the server component of notvox cue. Meant to be run on a "nodbox", but can be run locally too.  
+this is the server component of notvox cue.  
+Meant to be run on a "nodbox", but can be run locally too.  
 Honestly it's better locally that way you can control playback to your machine instead of to some server meant to just play silently.  
+Not that it really matters with device control.  
 
 #### setup
 clone the repo.  
