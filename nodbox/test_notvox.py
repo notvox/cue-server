@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NotVox Integration Test Script
-Tests all commands against a running NotVox server, aka a "nodbox"
+Tests all commands against a running NotVox server
 """
 
 import subprocess
@@ -206,6 +206,12 @@ def main():
     
     # Test 13: Lucky mode
     def test_lucky():
+        # Ensure we have some history first
+        tester.run_command(f'notvox cue "Test Track" 5s')
+        time.sleep(1)
+        tester.run_command("notvox stop")
+        time.sleep(1)
+        
         success, stdout, _ = tester.run_command(f"notvox lucky {TEST_DURATION}")
         return success and ("[LUCKY]" in stdout or "Lucky pick:" in stdout)
     
@@ -260,6 +266,95 @@ def main():
         return success
     
     tester.test("Combined History", test_combined_history)
+    
+    # MODE TESTS
+    # Test 19: List modes
+    def test_mode_list():
+        success, stdout, _ = tester.run_command("notvox mode list")
+        return success and "Available modes" in stdout
+    
+    tester.test("List Modes", test_mode_list)
+    
+    # Test 20: Quick focus mode
+    def test_focus_mode():
+        success, stdout, _ = tester.run_command(f"notvox focus -d {TEST_DURATION}")
+        return success and "[FOCUS MODE]" in stdout
+    
+    tester.test("Focus Mode", test_focus_mode)
+    
+    tester.wait(2, "Testing focus mode")
+    
+    # Test 21: Check current mode
+    def test_current_mode():
+        success, stdout, _ = tester.run_command("notvox mode")
+        return success and "[CURRENT MODE]" in stdout and "focus" in stdout
+    
+    tester.test("Current Mode Check", test_current_mode)
+    
+    # Test 22: Stop mode
+    def test_mode_stop():
+        success, stdout, _ = tester.run_command("notvox mode stop")
+        return success and "[STOP]" in stdout
+    
+    tester.test("Stop Mode", test_mode_stop)
+    
+    # Test 23: Party mode
+    def test_party_mode():
+        success, stdout, _ = tester.run_command(f"notvox party -d {TEST_DURATION}")
+        return success and "[PARTY MODE]" in stdout
+    
+    tester.test("Party Mode", test_party_mode)
+    
+    tester.wait(2, "Testing party mode")
+    tester.run_command("notvox stop")
+    
+    # Test 24: Create custom mode
+    def test_create_mode():
+        success, stdout, _ = tester.run_command('notvox mode create "test-mode" --based-on focus --description "Test mode for testing"')
+        return success and "[OK]" in stdout and "Created mode" in stdout
+    
+    tester.test("Create Custom Mode", test_create_mode)
+    
+    # Test 25: Start custom mode
+    def test_custom_mode():
+        success, stdout, _ = tester.run_command(f'notvox mode start test-mode -d {TEST_DURATION}')
+        return success and "[MODE]" in stdout
+    
+    tester.test("Start Custom Mode", test_custom_mode)
+    
+    tester.wait(2, "Testing custom mode")
+    tester.run_command("notvox stop")
+    
+    # Test 26: Configure mode
+    def test_configure_mode():
+        success, stdout, _ = tester.run_command('notvox mode config test-mode --volume 60')
+        return success and "[OK]" in stdout
+    
+    tester.test("Configure Mode", test_configure_mode)
+    
+    # Test 27: Delete custom mode
+    def test_delete_mode():
+        # Use echo to auto-confirm
+        success, stdout, _ = tester.run_command('echo "y" | notvox mode delete test-mode')
+        return success and "[OK]" in stdout
+    
+    tester.test("Delete Custom Mode", test_delete_mode)
+    
+    # Test 28: Mode with lucky
+    def test_mode_lucky():
+        # Start a mode first
+        tester.run_command(f"notvox focus -d 30s")
+        time.sleep(1)
+        
+        # Lucky should be mode-aware
+        success, stdout, _ = tester.run_command(f"notvox lucky {TEST_DURATION}")
+        result = success and ("[LUCKY]" in stdout or "Lucky pick:" in stdout)
+        
+        # Clean up
+        tester.run_command("notvox mode stop")
+        return result
+    
+    tester.test("Mode-Aware Lucky", test_mode_lucky)
     
     # Cleanup - stop any playing track
     tester.run_command("notvox stop")
