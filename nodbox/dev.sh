@@ -7,6 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
 PID_FILE="$SCRIPT_DIR/.notvox-server.pid"
 LOG_FILE="$SCRIPT_DIR/notvox-server.log"
+ENV_FILE="$SCRIPT_DIR/.env"
+
+# Load environment variables from .env file if it exists
+if [[ -f "$ENV_FILE" ]]; then
+    echo "📋 Loading environment from .env"
+    set -a  # automatically export all variables
+    source "$ENV_FILE"
+    set +a  # turn off automatic export
+fi
 
 start_server() {
     if [[ -f "$PID_FILE" ]] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
@@ -15,6 +24,15 @@ start_server() {
     fi
     
     echo "🚀 Starting NotVox server..."
+    
+    # Verify Spotify credentials are loaded
+    if [[ -z "$SPOTIFY_CLIENT_ID" ]] || [[ -z "$SPOTIFY_CLIENT_SECRET" ]]; then
+        echo "❌ Missing Spotify credentials!"
+        echo "   Please ensure .env file contains:"
+        echo "   SPOTIFY_CLIENT_ID=your_client_id"
+        echo "   SPOTIFY_CLIENT_SECRET=your_client_secret"
+        return 1
+    fi
     
     # Create virtual environment if it doesn't exist
     if [[ ! -d "$VENV_DIR" ]]; then
@@ -41,7 +59,7 @@ start_server() {
         echo "📝 Logs: tail -f $LOG_FILE"
     else
         echo "❌ Failed to start server. Check logs:"
-        cat "$LOG_FILE"
+        tail -20 "$LOG_FILE"
         rm -f "$PID_FILE"
         return 1
     fi
@@ -92,6 +110,13 @@ status_server() {
             else
                 echo "⚠️  Server process running but not responding"
             fi
+        fi
+        
+        # Show environment status
+        if [[ -n "$SPOTIFY_CLIENT_ID" ]]; then
+            echo "🎵 Spotify credentials loaded"
+        else
+            echo "⚠️  No Spotify credentials in environment"
         fi
     else
         echo "🛑 NotVox server is not running"
@@ -148,9 +173,9 @@ case "${1:-start}" in
         echo "  logs    - Show server logs (tail -f)"
         echo ""
         echo "Quick test commands after starting:"
-        echo "  python notvox.py status"
-        echo "  python notvox.py play 'test song' 30s"
-        echo "  python notvox.py stop"
+        echo "  notvox status"
+        echo "  notvox cue 'test song' 30s"
+        echo "  notvox stop"
         exit 1
         ;;
 esac

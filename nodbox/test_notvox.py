@@ -474,6 +474,122 @@ def main():
         tester.run_command("notvox stop")
         return result and volume_changed
 
+    # ENHANCED CUE TESTS
+    # Test 36: Play playlist
+    def test_play_playlist():
+        success, stdout, _ = tester.run_command('notvox cue "playlist:Today\'s Top Hits" 30s')
+        result = success and ("Now playing: Playlist:" in stdout or "No playlists found" in stdout)
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(2)
+            # Check queue was populated
+            queue_success, queue_stdout, _ = tester.run_command("notvox queue")
+            result = result and queue_success
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Play Playlist", test_play_playlist)
+
+    # Test 37: Play album
+    def test_play_album():
+        success, stdout, _ = tester.run_command('notvox cue "album:Abbey Road" 30s')
+        result = success and ("Now playing: Album:" in stdout or "No albums found" in stdout)
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Play Album", test_play_album)
+
+    # Test 38: Play artist
+    def test_play_artist():
+        success, stdout, _ = tester.run_command('notvox cue "artist:The Beatles" 30s')
+        result = success and ("Now playing: Artist:" in stdout or "No artists found" in stdout)
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Play Artist", test_play_artist)
+
+    # Test 39: Radio mode
+    def test_radio_mode():
+        success, stdout, _ = tester.run_command('notvox cue "radio:Let It Be" 30s')
+        result = success and ("Now playing: Radio based on:" in stdout or "No tracks found" in stdout)
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Radio Mode", test_radio_mode)
+
+    # Test 40: Genre play
+    def test_genre_play():
+        success, stdout, _ = tester.run_command('notvox cue "genre:jazz" 30s')
+        result = success and ("Now playing: Genre:" in stdout or "[OK]" in stdout)
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Genre Play", test_genre_play)
+
+    # Test 41: Quick genre command
+    def test_quick_genre():
+        success, stdout, _ = tester.run_command('notvox genre classical 20s')
+        result = success and ("[OK]" in stdout or "Now playing:" in stdout)
+        
+        if success:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+        
+        return result
+
+    tester.test("Quick Genre Command", test_quick_genre)
+
+    # Test 42: Quick radio command  
+    def test_quick_radio():
+        success, stdout, _ = tester.run_command('notvox radio "Stairway to Heaven" 20s')
+        result = success and ("[OK]" in stdout or "Now playing:" in stdout)
+        
+        if success:
+            time.sleep(2)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+    tester.test("Quick Radio Command", test_quick_radio)
+
+    # Test 43: Full duration
+    def test_full_duration():
+        # Test with a short album or playlist
+        success, stdout, _ = tester.run_command('notvox cue "album:test" full')
+        # Should either work or fail gracefully
+        result = success
+        
+        if success and "Now playing:" in stdout:
+            time.sleep(1)
+            tester.run_command("notvox stop")
+            tester.run_command("notvox queue clear -y || echo y | notvox queue clear")
+        
+        return result
+
+
     tester.test("Mode Sets Volume", test_mode_with_volume)
 
     # Cleanup - stop any playing track

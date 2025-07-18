@@ -221,3 +221,131 @@ class SpotifyClient:
                 return device
         
         return None
+    
+    # PLAYLIST, ALBUM, ARTIST METHODS
+    def search_playlist(self, query, limit=10):
+        """Search for playlists"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        results = self.spotify.search(q=query, type='playlist', limit=limit)
+        return results['playlists']['items']
+
+    def search_album(self, query, limit=10):
+        """Search for albums"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        results = self.spotify.search(q=query, type='album', limit=limit)
+        return results['albums']['items']
+
+    def search_artist(self, query, limit=10):
+        """Search for artists"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        results = self.spotify.search(q=query, type='artist', limit=limit)
+        return results['artists']['items']
+
+    def get_playlist_tracks(self, playlist_id, limit=100):
+        """Get all tracks from a playlist"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        tracks = []
+        offset = 0
+        
+        while True:
+            results = self.spotify.playlist_tracks(
+                playlist_id, 
+                limit=min(limit - len(tracks), 100),
+                offset=offset
+            )
+            
+            for item in results['items']:
+                if item['track'] and item['track']['id']:  # Skip local files
+                    tracks.append(item['track'])
+            
+            if not results['next'] or len(tracks) >= limit:
+                break
+                
+            offset += 100
+        
+        return tracks
+
+    def get_album_tracks(self, album_id):
+        """Get all tracks from an album"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        results = self.spotify.album_tracks(album_id, limit=50)
+        tracks = results['items']
+        
+        # Get additional album info to add to tracks
+        album_info = self.spotify.album(album_id)
+        
+        # Enhance track info with album details
+        for track in tracks:
+            track['album'] = {
+                'id': album_info['id'],
+                'name': album_info['name'],
+                'images': album_info['images']
+            }
+            # Album tracks don't include artist info in the same way
+            track['artists'] = album_info['artists']
+        
+        return tracks
+
+    def get_artist_top_tracks(self, artist_id, country='US'):
+        """Get top tracks for an artist"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        results = self.spotify.artist_top_tracks(artist_id, country=country)
+        return results['tracks']
+
+    def get_radio_recommendations(self, seed_tracks=None, seed_artists=None, seed_genres=None, limit=50):
+        """Get radio-style recommendations based on seeds"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        # Ensure we have at least one seed
+        if not any([seed_tracks, seed_artists, seed_genres]):
+            raise ValueError("At least one seed (track, artist, or genre) is required")
+        
+        kwargs = {'limit': limit}
+        
+        if seed_tracks:
+            kwargs['seed_tracks'] = seed_tracks[:5]
+        if seed_artists:
+            kwargs['seed_artists'] = seed_artists[:5]
+        if seed_genres:
+            kwargs['seed_genres'] = seed_genres[:5]
+        
+        return self.spotify.recommendations(**kwargs)
+
+    def search_genre_tracks(self, genre, limit=50):
+        """Search for tracks by genre"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        # Spotify doesn't have direct genre search, so we use recommendations
+        # with just a genre seed
+        try:
+            recommendations = self.get_radio_recommendations(
+                seed_genres=[genre.lower()],
+                limit=limit
+            )
+            return recommendations['tracks']
+        except Exception as e:
+            # Fallback to searching for the genre term
+            logger.warning(f"Genre recommendation failed, falling back to search: {e}")
+            return self.search_track(f"genre:{genre}", limit=limit)
+
+    def get_available_genre_seeds(self):
+        """Get list of available genre seeds for recommendations"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        result = self.spotify.recommendation_genre_seeds()
+        return result['genres']

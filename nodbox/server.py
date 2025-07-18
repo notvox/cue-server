@@ -54,10 +54,76 @@ def start_auth_refresh():
 
 
 # API Routes
+def parse_content_query(query):
+    """Parse query to determine content type and search term"""
+    query = query.strip()
+    
+    # Check for type prefixes
+    if query.startswith('playlist:'):
+        return 'playlist', query[9:].strip().strip('"')
+    elif query.startswith('album:'):
+        return 'album', query[6:].strip().strip('"')
+    elif query.startswith('artist:'):
+        return 'artist', query[7:].strip().strip('"')
+    elif query.startswith('radio:'):
+        return 'radio', query[6:].strip().strip('"')
+    elif query.startswith('genre:'):
+        return 'genre', query[6:].strip().strip('"')
+    else:
+        return 'track', query
+
+
+def calculate_track_durations(tracks, total_duration_seconds):
+    """Calculate duration for each track when playing a collection"""
+    if not tracks:
+        return []
+    
+    # If duration is "full", play each track completely once
+    if total_duration_seconds == -1:
+        return [(track, None) for track in tracks]  # None means play full track
+    
+    # Otherwise, distribute time evenly across tracks
+    per_track_duration = total_duration_seconds // len(tracks)
+    
+    # Ensure minimum duration per track (at least 30 seconds)
+    min_duration = 30
+    if per_track_duration < min_duration:
+        per_track_duration = min_duration
+    
+    track_durations = []
+    remaining_time = total_duration_seconds
+    
+    for i, track in enumerate(tracks):
+        if remaining_time <= 0:
+            break
+            
+        # Last track gets all remaining time
+        if i == len(tracks) - 1:
+            duration = remaining_time
+        else:
+            duration = min(per_track_duration, remaining_time)
+        
+        track_durations.append((track, duration))
+        remaining_time -= duration
+    
+    return track_durations
+
+
+#!/usr/bin/env python3
+"""
+Debug version of play_enhanced endpoint with better error logging
+"""
+
+# In server.py, replace the play_enhanced function with this version:
+
 @app.route('/play', methods=['POST'])
-def play():
-    """Play a track for specified duration"""
+def play_enhanced():
+    """Enhanced play endpoint supporting playlists, albums, artists, radio, and genres"""
     data = request.get_json()
+    
+    # Add debug logging
+    logger.info(f"Play request received: {data}")
+    
     if not data or 'query' not in data or 'duration' not in data:
         return jsonify({"error": "Missing 'query' or 'duration' in request"}), 400
     
@@ -65,27 +131,199 @@ def play():
         return jsonify({"error": "Spotify not authenticated"}), 500
     
     try:
-        # Search for track
-        tracks = spotify.search_track(data['query'], limit=1)
-        if not tracks:
-            return jsonify({"error": f"No tracks found for '{data['query']}'"}), 404
+        query = data['query']
+        duration_str = data['duration']
         
-        track = tracks[0]
-        track_uri = track['uri']
-        track_name = f"{track['name']} by {track['artists'][0]['name']}"
+        # Log the query parsing
+        logger.info(f"Processing query: '{query}' with duration: '{duration_str}'")
         
-        # Parse duration and start session
-        duration_seconds = session_mgr.parse_duration(data['duration'])
-        result = session_mgr.start_session(track_name, track_uri, duration_seconds)
+        # Parse content type from query
+        content_type, search_term = parse_content_query(query)
+        
+        logger.info(f"Parsed content type: '{content_type}', search term: '{search_term}'")
+        
+        # Handle "full" duration
+        if duration_str.lower() == 'full':
+            duration_seconds = -1  # Special value for full playback
+        else:
+            duration_seconds = session_mgr.parse_duration(duration_str)
+        
+        tracks_to_play = []
+        
+        # Fetch content based on type
+        if content_type == 'track':
+            # Original single track behavior
+            tracks = spotify.search_track(search_term, limit=1)
+            if not tracks:
+                return jsonify({"error": f"No tracks found for '{search_term}'"}), 404
+            
+            track = tracks[0]
+            track_uri = track['uri']
+            track_name = f"{track['name']} by {track['artists'][0]['name']}"
+            
+            # For single tracks, use the full duration
+            result = session_mgr.start_session(track_name, track_uri, duration_seconds if duration_seconds != -1 else 300)
+            
+            return jsonify({
+                "message": f"Now playing: {track_name}",
+                "duration": duration_str,
+                "ends_at": result['ends_at']
+            }), 200
+            
+        elif content_type == 'playlist':
+            logger.info(f"Searching for playlist: '{search_term}'")
+            # Search for playlist
+            playlists = spotify.search_playlist(search_term, limit=1)
+            if not playlists:
+                return jsonify({"error": f"No playlists found for '{search_term}'"}), 404
+            
+            playlist = playlists[0]
+            playlist_name = playlist['name']
+            playlist_id = playlist['id']
+            
+            logger.info(f"Found playlist: '{playlist_name}' (ID: {playlist_id})")
+            
+            # Get playlist tracks
+            tracks = spotify.get_playlist_tracks(playlist_id, limit=100)
+            if not tracks:
+                return jsonify({"error": f"Playlist '{playlist_name}' has no playable tracks"}), 404
+            
+            tracks_to_play = tracks
+            content_name = f"Playlist: {playlist_name}"
+            
+        elif content_type == 'album':
+            logger.info(f"Searching for album: '{search_term}'")
+            # Search for album
+            albums = spotify.search_album(search_term, limit=1)
+            if not albums:
+                logger.warning(f"No albums found for search term: '{search_term}'")
+                return jsonify({"error": f"No albums found for '{search_term}'"}), 404
+            
+            album = albums[0]
+            album_name = album['name']
+            album_id = album['id']
+            artist_name = album['artists'][0]['name'] if album['artists'] else 'Unknown'
+            
+            logger.info(f"Found album: '{album_name}' by {artist_name} (ID: {album_id})")
+            
+            # Get album tracks
+            tracks = spotify.get_album_tracks(album_id)
+            if not tracks:
+                return jsonify({"error": f"Album '{album_name}' has no tracks"}), 404
+            
+            logger.info(f"Album has {len(tracks)} tracks")
+            
+            tracks_to_play = tracks
+            content_name = f"Album: {album_name} by {artist_name}"
+            
+        elif content_type == 'artist':
+            logger.info(f"Searching for artist: '{search_term}'")
+            # Search for artist
+            artists = spotify.search_artist(search_term, limit=1)
+            if not artists:
+                return jsonify({"error": f"No artists found for '{search_term}'"}), 404
+            
+            artist = artists[0]
+            artist_name = artist['name']
+            artist_id = artist['id']
+            
+            logger.info(f"Found artist: '{artist_name}' (ID: {artist_id})")
+            
+            # Get artist's top tracks
+            tracks = spotify.get_artist_top_tracks(artist_id)
+            if not tracks:
+                return jsonify({"error": f"No top tracks found for {artist_name}"}), 404
+            
+            tracks_to_play = tracks
+            content_name = f"Artist: {artist_name} (Top Tracks)"
+            
+        elif content_type == 'radio':
+            logger.info(f"Creating radio for: '{search_term}'")
+            # Search for a seed track
+            seed_tracks = spotify.search_track(search_term, limit=1)
+            if not seed_tracks:
+                return jsonify({"error": f"No tracks found to create radio for '{search_term}'"}), 404
+            
+            seed_track = seed_tracks[0]
+            seed_track_id = seed_track['id']
+            seed_track_name = f"{seed_track['name']} by {seed_track['artists'][0]['name']}"
+            
+            logger.info(f"Using seed track: '{seed_track_name}' (ID: {seed_track_id})")
+            
+            # Get recommendations
+            recommendations = spotify.get_radio_recommendations(
+                seed_tracks=[seed_track_id],
+                limit=50
+            )
+            
+            tracks = recommendations['tracks']
+            if not tracks:
+                return jsonify({"error": f"Could not create radio station"}), 404
+            
+            # Include the seed track at the beginning
+            tracks_to_play = [seed_track] + tracks
+            content_name = f"Radio based on: {seed_track_name}"
+            
+        elif content_type == 'genre':
+            logger.info(f"Searching for genre: '{search_term}'")
+            # Get tracks for genre
+            tracks = spotify.search_genre_tracks(search_term, limit=50)
+            if not tracks:
+                return jsonify({"error": f"No tracks found for genre '{search_term}'"}), 404
+            
+            tracks_to_play = tracks
+            content_name = f"Genre: {search_term}"
+        
+        # Calculate durations for each track
+        track_durations = calculate_track_durations(tracks_to_play, duration_seconds)
+        
+        if not track_durations:
+            return jsonify({"error": "No tracks to play"}), 404
+        
+        logger.info(f"Playing {len(track_durations)} tracks")
+        
+        # Start playing the first track
+        first_track, first_duration = track_durations[0]
+        track_uri = first_track['uri']
+        track_name = f"{first_track['name']} by {first_track['artists'][0]['name']}"
+        
+        # Start session with first track
+        if first_duration is None:  # Full duration
+            # Get actual track duration from Spotify
+            track_duration_ms = first_track.get('duration_ms', 180000)  # Default 3 min
+            first_duration = track_duration_ms // 1000
+        
+        result = session_mgr.start_session(track_name, track_uri, first_duration)
+        
+        # Queue the rest
+        queued_count = 0
+        for track, duration in track_durations[1:]:
+            track_uri = track['uri']
+            track_name = f"{track['name']} by {track['artists'][0]['name']}"
+            
+            if duration is None:
+                # Full track duration
+                track_duration_ms = track.get('duration_ms', 180000)
+                duration = track_duration_ms // 1000
+            
+            queue_mgr.add_to_queue(track_name, track_uri, duration)
+            queued_count += 1
+        
+        message = f"Now playing: {content_name}"
+        if queued_count > 0:
+            message += f" ({queued_count} tracks queued)"
         
         return jsonify({
-            "message": f"Now playing: {track_name}",
-            "duration": data['duration'],
+            "message": message,
+            "content_type": content_type,
+            "content_name": content_name,
+            "duration": duration_str,
+            "total_tracks": len(track_durations),
             "ends_at": result['ends_at']
         }), 200
         
     except Exception as e:
-        logger.error(f"Playback error: {e}")
+        logger.error(f"Enhanced playback error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
