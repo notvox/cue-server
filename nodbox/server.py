@@ -109,13 +109,6 @@ def calculate_track_durations(tracks, total_duration_seconds):
     return track_durations
 
 
-#!/usr/bin/env python3
-"""
-Debug version of play_enhanced endpoint with better error logging
-"""
-
-# In server.py, replace the play_enhanced function with this version:
-
 @app.route('/play', methods=['POST'])
 def play_enhanced():
     """Enhanced play endpoint supporting playlists, albums, artists, radio, and genres"""
@@ -144,7 +137,7 @@ def play_enhanced():
         
         # Handle "full" duration
         if duration_str.lower() == 'full':
-            duration_seconds = -1  # Special value for full playback
+            duration_seconds = None  # None means play full track/album/playlist
         else:
             duration_seconds = session_mgr.parse_duration(duration_str)
         
@@ -161,8 +154,12 @@ def play_enhanced():
             track_uri = track['uri']
             track_name = f"{track['name']} by {track['artists'][0]['name']}"
             
-            # For single tracks, use the full duration
-            result = session_mgr.start_session(track_name, track_uri, duration_seconds if duration_seconds != -1 else 300)
+            # For single tracks with "full" duration, use actual track duration
+            if duration_seconds is None:
+                track_duration_ms = track.get('duration_ms', 180000)  # Default 3 min
+                duration_seconds = track_duration_ms // 1000
+            
+            result = session_mgr.start_session(track_name, track_uri, duration_seconds)
             
             return jsonify({
                 "message": f"Now playing: {track_name}",
@@ -275,7 +272,12 @@ def play_enhanced():
             content_name = f"Genre: {search_term}"
         
         # Calculate durations for each track
-        track_durations = calculate_track_durations(tracks_to_play, duration_seconds)
+        if duration_seconds is None:
+            # "full" duration - play each track once at full length
+            track_durations = [(track, track.get('duration_ms', 180000) // 1000) for track in tracks_to_play]
+        else:
+            # Fixed duration - distribute time across tracks
+            track_durations = calculate_track_durations(tracks_to_play, duration_seconds)
         
         if not track_durations:
             return jsonify({"error": "No tracks to play"}), 404
@@ -287,12 +289,6 @@ def play_enhanced():
         track_uri = first_track['uri']
         track_name = f"{first_track['name']} by {first_track['artists'][0]['name']}"
         
-        # Start session with first track
-        if first_duration is None:  # Full duration
-            # Get actual track duration from Spotify
-            track_duration_ms = first_track.get('duration_ms', 180000)  # Default 3 min
-            first_duration = track_duration_ms // 1000
-        
         result = session_mgr.start_session(track_name, track_uri, first_duration)
         
         # Queue the rest
@@ -300,11 +296,6 @@ def play_enhanced():
         for track, duration in track_durations[1:]:
             track_uri = track['uri']
             track_name = f"{track['name']} by {track['artists'][0]['name']}"
-            
-            if duration is None:
-                # Full track duration
-                track_duration_ms = track.get('duration_ms', 180000)
-                duration = track_duration_ms // 1000
             
             queue_mgr.add_to_queue(track_name, track_uri, duration)
             queued_count += 1
