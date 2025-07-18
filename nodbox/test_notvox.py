@@ -355,7 +355,127 @@ def main():
         return result
     
     tester.test("Mode-Aware Lucky", test_mode_lucky)
-    
+
+    # VOLUME & DEVICE TESTS
+    # Test 29: Get current volume
+    def test_get_volume():
+        # Make sure something is playing first
+        tester.run_command(f'notvox cue "test" 30s')
+        time.sleep(2)
+        
+        success, stdout, _ = tester.run_command("notvox volume")
+        result = success and "Current volume:" in stdout
+        
+        tester.run_command("notvox stop")
+        return result
+
+    tester.test("Get Volume", test_get_volume)
+
+    # Test 30: Set volume
+    def test_set_volume():
+        tester.run_command(f'notvox cue "test" 30s')
+        time.sleep(2)
+        
+        success, stdout, _ = tester.run_command("notvox volume 50")
+        result = success and "[OK]" in stdout and "50%" in stdout
+        
+        tester.run_command("notvox stop")
+        return result
+
+    tester.test("Set Volume", test_set_volume)
+
+    # Test 31: Volume shortcuts
+    def test_volume_shortcuts():
+        tester.run_command(f'notvox cue "test" 30s')
+        time.sleep(2)
+        
+        # Set a baseline volume
+        tester.run_command("notvox volume 50")
+        time.sleep(1)
+        
+        # Test louder
+        success1, stdout1, _ = tester.run_command("notvox louder")
+        louder_ok = success1 and "[OK]" in stdout1 and "60%" in stdout1  # Should be 50 + 10
+        
+        # Test quieter  
+        success2, stdout2, _ = tester.run_command("notvox quieter 5")
+        quieter_ok = success2 and "[OK]" in stdout2 and "55%" in stdout2  # Should be 60 - 5
+        
+        # Test mute
+        success3, stdout3, _ = tester.run_command("notvox mute")
+        mute_ok = success3 and "[MUTED]" in stdout3
+        
+        # Verify mute worked
+        success4, stdout4, _ = tester.run_command("notvox volume")
+        mute_verified = success4 and "0%" in stdout4
+        
+        result = louder_ok and quieter_ok and mute_ok and mute_verified
+        
+        tester.run_command("notvox stop")
+        return result
+
+    tester.test("Volume Shortcuts", test_volume_shortcuts)
+
+    # Test 32: Relative volume
+    def test_relative_volume():
+        tester.run_command(f'notvox cue "test" 30s')
+        time.sleep(2)
+        
+        # Set baseline
+        tester.run_command("notvox volume 40")
+        
+        # Test positive relative
+        success1, stdout1, _ = tester.run_command("notvox volume +20")
+        plus_ok = success1 and "[OK]" in stdout1 and "60%" in stdout1
+        
+        # Test negative relative
+        success2, stdout2, _ = tester.run_command("notvox volume -15")
+        minus_ok = success2 and "[OK]" in stdout2 and "45%" in stdout2
+        
+        result = plus_ok and minus_ok
+        
+        tester.run_command("notvox stop")
+        return result
+
+    tester.test("Relative Volume", test_relative_volume)
+
+    # Test 33: List devices
+    def test_list_devices():
+        success, stdout, _ = tester.run_command("notvox device")
+        return success and ("Available Spotify devices" in stdout or "No Spotify devices" in stdout)
+
+    tester.test("List Devices", test_list_devices)
+
+    # Test 34: Device list command
+    def test_device_list_command():
+        success, stdout, _ = tester.run_command("notvox device list")
+        return success
+
+    tester.test("Device List Command", test_device_list_command)
+
+    # Test 35: Mode with volume
+    def test_mode_with_volume():
+        # Start with a known volume
+        tester.run_command(f'notvox cue "test" 15s')
+        time.sleep(1)
+        tester.run_command("notvox volume 30")
+        tester.run_command("notvox stop")
+        
+        # Start party mode
+        success, stdout, _ = tester.run_command(f"notvox party -d {TEST_DURATION}")
+        result = success and "[PARTY MODE]" in stdout
+        
+        time.sleep(2)
+        
+        # Check if volume was set to party level (should be 80 or adjusted for time)
+        vol_success, vol_stdout, _ = tester.run_command("notvox volume")
+        volume_changed = vol_success and "Current volume:" in vol_stdout and "30%" not in vol_stdout
+        
+        tester.run_command("notvox stop")
+        return result and volume_changed
+
+    tester.test("Mode Sets Volume", test_mode_with_volume)
+
     # Cleanup - stop any playing track
     tester.run_command("notvox stop")
     

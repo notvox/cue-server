@@ -780,7 +780,198 @@ def delete_mode(mode_name):
     except Exception as e:
         logger.error(f"Error deleting mode: {e}")
         return jsonify({"error": str(e)}), 500
+# VOLUME & DEVICE ENDPOINTS
+@app.route('/volume', methods=['GET'])
+def get_volume():
+    """Get current volume"""
+    try:
+        if not spotify.is_authenticated():
+            return jsonify({"error": "Spotify not authenticated"}), 500
+        
+        volume = spotify.get_volume()
+        if volume is None:
+            return jsonify({"error": "No active playback device"}), 404
+        
+        return jsonify({"volume": volume}), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting volume: {e}")
+        return jsonify({"error": str(e)}), 500
 
+
+@app.route('/volume', methods=['POST'])
+def set_volume():
+    """Set volume"""
+    try:
+        if not spotify.is_authenticated():
+            return jsonify({"error": "Spotify not authenticated"}), 500
+        
+        data = request.get_json()
+        volume_str = str(data.get('volume', '50'))
+        
+        # Handle relative volume changes
+        if volume_str.startswith('+') or volume_str.startswith('-'):
+            delta = int(volume_str)
+            new_volume = spotify.adjust_volume(delta)
+        else:
+            new_volume = spotify.set_volume(int(volume_str))
+        
+        # If we're in a mode, update the mode's volume preference
+        current_mode = mode_mgr.get_current_mode()
+        if current_mode:
+            mode_mgr.update_mode(current_mode, {'volume': new_volume})
+        
+        return jsonify({
+            "volume": new_volume,
+            "message": f"Volume set to {new_volume}%"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error setting volume: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/devices', methods=['GET'])
+def get_devices():
+    """Get available Spotify devices"""
+    try:
+        if not spotify.is_authenticated():
+            return jsonify({"error": "Spotify not authenticated"}), 500
+        
+        devices = spotify.get_devices()
+        active_device = spotify.get_active_device()
+        
+        return jsonify({
+            "devices": devices,
+            "active_device": active_device,
+            "total": len(devices)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting devices: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/device/transfer', methods=['POST'])
+def transfer_device():
+    """Transfer playback to a specific device"""
+    try:
+        if not spotify.is_authenticated():
+            return jsonify({"error": "Spotify not authenticated"}), 500
+        
+        data = request.get_json()
+        device_identifier = data.get('device')
+        
+        if not device_identifier:
+            return jsonify({"error": "Missing device parameter"}), 400
+        
+        # Try to find device by ID or name
+        device = None
+        devices = spotify.get_devices()
+        
+        # First try as device ID
+        for d in devices:
+            if d['id'] == device_identifier:
+                device = d
+                break
+        
+        # If not found, try by name
+        if not device:
+            device = spotify.find_device_by_name(device_identifier)
+        
+        if not device:
+            return jsonify({"error": f"Device '{device_identifier}' not found"}), 404
+        
+        # Transfer playback
+        spotify.transfer_playback(device['id'])
+        
+        return jsonify({
+            "message": f"Playback transferred to {device['name']}",
+            "device": device
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error transferring device: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Update the mode start endpoint to set volume
+@app.route('/mode/start', methods=['POST'])
+def start_mode_with_volume():
+    """Enhanced mode start that sets volume"""
+    try:
+        data = request.get_json()
+        mode_name = data.get('mode')
+        
+        if not mode_name:
+            return jsonify({"error": "Missing mode parameter"}), 400
+        
+        # Get mode configuration
+        mode_config = mode_mgr.get_mode(mode_name)
+        if not mode_config:
+            return jsonify({"error": f"Unknown mode: {mode_name}"}), 404
+        
+        # Set current mode
+        mode_mgr.set_current_mode(mode_name)
+        
+        # Override duration/volume if provided
+        duration = data.get('duration', mode_config.get('duration', '1h'))
+        volume = data.get('volume', mode_config.get('volume', 50))
+        
+        # Get time-adjusted volume
+        adjusted_volume = mode_mgr.get_volume_adjustment(mode_name)
+        if adjusted_volume:
+            volume = adjusted_volume
+        
+        # Set volume before playing
+        try:
+            spotify.set_volume(volume)
+        except Exception as e:
+            logger.warning(f"Could not set volume: {e}")
+        
+        # Get search query based on mode
+        search_query = mode_mgr.get_search_query(mode_name)
+        
+        # Search for appropriate tracks
+        if not spotify.is_authenticated():
+            return jsonify({"error": "Spotify not authenticated"}), 500
+        
+        # Try mode-specific search first
+        tracks = spotify.search_track(search_query, limit=50)
+        
+        if not tracks:
+            # Fallback to genre search
+            genres = mode_config.get('genres', [])
+            if genres:
+                for genre in genres:
+                    tracks = spotify.search_track(f"genre:{genre}", limit=50)
+                    if tracks:
+                        break
+        
+        if not tracks:
+            return jsonify({"error": f"No tracks found for {mode_name} mode"}), 404
+        
+        # Pick a track (could be random or based on mode preferences)
+        track = random.choice(tracks)
+        track_uri = track['uri']
+        track_name = f"{track['name']} by {track['artists'][0]['name']}"
+        
+        # Start playback
+        duration_seconds = session_mgr.parse_duration(duration)
+        result = session_mgr.start_session(track_name, track_uri, duration_seconds)
+        
+        return jsonify({
+            "message": f"Started {mode_name} mode",
+            "mode": mode_name,
+            "track": track_name,
+            "duration": duration,
+            "volume": volume,
+            "ends_at": result['ends_at']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error starting mode: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     # Check for required environment variables
