@@ -88,18 +88,21 @@ class SpotifyClient:
         
         return self.spotify.current_user_recently_played(limit=min(limit, 50))
     
-    def get_recommendations(self, seed_tracks=None, seed_genres=None, limit=20):
+    def get_recommendations(self, seed_tracks=None, seed_genres=None, limit=20, **kwargs):
         """Get track recommendations"""
         if not self.spotify:
             raise Exception("Spotify not authenticated")
         
-        kwargs = {'limit': limit}
+        params = {'limit': limit}
         if seed_tracks:
-            kwargs['seed_tracks'] = seed_tracks[:5]  # Max 5 seeds
+            params['seed_tracks'] = seed_tracks[:5]  # Max 5 seeds
         if seed_genres:
-            kwargs['seed_genres'] = seed_genres[:5]  # Max 5 seeds
+            params['seed_genres'] = seed_genres[:5]  # Max 5 seeds
         
-        return self.spotify.recommendations(**kwargs)
+        # Add any additional parameters (for mode-specific recommendations)
+        params.update(kwargs)
+        
+        return self.spotify.recommendations(**params)
     
     def get_track_details(self, track_ids):
         """Get details for multiple tracks"""
@@ -114,3 +117,107 @@ class SpotifyClient:
             raise Exception("Spotify not authenticated")
         
         return self.spotify.artists(artist_ids)
+    
+    # VOLUME CONTROL METHODS
+    def set_volume(self, volume_percent, device_id=None):
+        """Set playback volume (0-100)"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        # Ensure volume is within bounds
+        volume_percent = max(0, min(100, int(volume_percent)))
+        
+        try:
+            self.spotify.volume(volume_percent, device_id=device_id)
+            logger.info(f"Volume set to {volume_percent}%")
+            return volume_percent
+        except Exception as e:
+            logger.error(f"Error setting volume: {e}")
+            raise
+    
+    def get_volume(self):
+        """Get current volume from active device"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        try:
+            playback = self.spotify.current_playback()
+            if playback and playback.get('device'):
+                return playback['device'].get('volume_percent', 0)
+            else:
+                # No active playback
+                return None
+        except Exception as e:
+            logger.error(f"Error getting volume: {e}")
+            return None
+    
+    def adjust_volume(self, delta):
+        """Adjust volume by a relative amount (+/- delta)"""
+        current = self.get_volume()
+        if current is None:
+            raise Exception("No active playback device")
+        
+        new_volume = current + delta
+        return self.set_volume(new_volume)
+    
+    # DEVICE CONTROL METHODS
+    def get_devices(self):
+        """Get available Spotify devices"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        try:
+            devices_data = self.spotify.devices()
+            devices = []
+            
+            for device in devices_data.get('devices', []):
+                devices.append({
+                    'id': device['id'],
+                    'name': device['name'],
+                    'type': device['type'],
+                    'is_active': device['is_active'],
+                    'volume': device.get('volume_percent', 0),
+                    'is_restricted': device.get('is_restricted', False)
+                })
+            
+            return devices
+        except Exception as e:
+            logger.error(f"Error getting devices: {e}")
+            raise
+    
+    def get_active_device(self):
+        """Get the currently active device"""
+        devices = self.get_devices()
+        for device in devices:
+            if device['is_active']:
+                return device
+        return None
+    
+    def transfer_playback(self, device_id, force_play=True):
+        """Transfer playback to a specific device"""
+        if not self.spotify:
+            raise Exception("Spotify not authenticated")
+        
+        try:
+            self.spotify.transfer_playback(device_id, force_play=force_play)
+            logger.info(f"Playback transferred to device {device_id}")
+        except Exception as e:
+            logger.error(f"Error transferring playback: {e}")
+            raise
+    
+    def find_device_by_name(self, device_name):
+        """Find a device by name (case-insensitive partial match)"""
+        devices = self.get_devices()
+        device_name_lower = device_name.lower()
+        
+        # First try exact match
+        for device in devices:
+            if device['name'].lower() == device_name_lower:
+                return device
+        
+        # Then try partial match
+        for device in devices:
+            if device_name_lower in device['name'].lower():
+                return device
+        
+        return None
